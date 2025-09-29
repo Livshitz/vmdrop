@@ -1,0 +1,24 @@
+{
+  "name": "digitalocean-scaffold",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --hot src/server.ts",
+    "start": "bun run src/server.ts",
+    "lint": "echo 'No linter configured'",
+    "bootstrap": "bash ops/bootstrap.sh",
+    "provision": "bash ops/remote.sh provision",
+    "deploy": "bash ops/deploy.sh",
+    "remote:status": "bash ops/remote.sh status",
+    "remote:logs": "bash ops/remote.sh logs",
+    "remote:restart": "bash ops/remote.sh restart",
+    "health": "bash ops/health.sh"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.23"
+  }
+}

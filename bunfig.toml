@@ -1,0 +1,6 @@
+[install]
+production = false
+
+[test]
+preload = []
+

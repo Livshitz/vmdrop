@@ -1,0 +1,9 @@
+{
+        email YOUR_EMAIL@example.com
+}
+
+YOUR_DOMAIN.com {
+        encode zstd gzip
+        reverse_proxy 127.0.0.1:3000
+}
+

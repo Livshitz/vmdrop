@@ -1,0 +1,19 @@
+[Unit]
+Description=DigitalOcean Scaffold Bun Service
+After=network.target
+
+[Service]
+User=app
+WorkingDirectory=/opt/digitalocean-scaffold
+Environment=HOST=127.0.0.1
+Environment=PORT=3000
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/digitalocean-scaffold/.env
+ExecStart=/usr/local/bin/bun run src/server.ts
+Restart=always
+RestartSec=2
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target
+
