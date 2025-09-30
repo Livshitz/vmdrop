@@ -1,10 +1,16 @@
 {
   "name": "vmdrop",
   "version": "0.1.0",
-  "private": true,
+  "description": "A CLI tool for managing VMs.",
   "type": "module",
   "bin": {
     "vmdrop": "src/cli/index.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "dev": "bun run --hot src/server.ts",
