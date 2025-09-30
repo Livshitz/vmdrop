@@ -38,7 +38,7 @@ apt-get update -y
 wait_for_apt
 apt-get upgrade -y
 wait_for_apt
-apt-get install -y curl ca-certificates rsync ufw caddy unzip
+apt-get install -y curl ca-certificates rsync ufw caddy unzip ffmpeg
 
 # Create app user if missing
 if ! id -u "$APP_USER" >/dev/null 2>&1; then
@@ -74,6 +74,7 @@ systemctl restart caddy
 ufw allow OpenSSH || true
 ufw allow 80/tcp || true
 ufw allow 443/tcp || true
+ufw allow 8085/tcp || true
 ufw --force enable || true
 
 echo "Provisioning complete. Point DNS for ${DOMAIN} to this droplet's IP."

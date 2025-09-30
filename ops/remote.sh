@@ -43,8 +43,12 @@ provision)
         fi
         "${SSH_BASE[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "$REMOTE_CMD"
         ;;
+cmd)
+        shift
+        "${SSH_BASE[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "$@"
+        ;;
 *)
-        echo "Usage: $0 [status|logs|restart|provision]" >&2
+        echo "Usage: $0 [status|logs|restart|provision|cmd]" >&2
         exit 1
         ;;
 esac

@@ -49,7 +49,7 @@ else
 fi
 
 echo "Installing deps and restarting service ..."
-REMOTE_CMD="cd '$DEPLOY_PATH' && if command -v bun >/dev/null 2>&1 && [ -f package.json ]; then bun install --production; fi && sudo systemctl daemon-reload && sudo systemctl restart ${SERVICE_NAME}.service && sudo systemctl status ${SERVICE_NAME}.service | tail -n 20 | cat"
+REMOTE_CMD="sudo chown -R app:app '$DEPLOY_PATH' && cd '$DEPLOY_PATH' && if command -v bun >/dev/null 2>&1 && [ -f package.json ]; then bun install --production; fi && sudo systemctl daemon-reload && sudo systemctl restart ${SERVICE_NAME}.service && sudo systemctl reload caddy && sudo systemctl status ${SERVICE_NAME}.service | tail -n 20 | cat"
 
 if [[ -n "$SSH_PASSWORD" || -n "$USE_PASSWORD" ]]; then
         sshpass -p "$SSH_PASSWORD" ssh -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" "$REMOTE_CMD"

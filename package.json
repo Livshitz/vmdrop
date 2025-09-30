@@ -9,11 +9,13 @@
     "lint": "echo 'No linter configured'",
     "bootstrap": "bash ops/bootstrap.sh",
     "provision": "bash ops/remote.sh provision",
+    "provision-x": "DOMAIN=agf-api.circlesup.com EMAIL=elya.l@7chairs.org bash ./ops/bootstrap.sh",
     "deploy": "bash ops/deploy.sh",
     "remote:status": "bash ops/remote.sh status",
     "remote:logs": "bash ops/remote.sh logs",
     "remote:restart": "bash ops/remote.sh restart",
-    "health": "bash ops/health.sh"
+    "health": "bash ops/health.sh",
+    "ngrok": "ngrok http 8085 --host-header='localhost:8085'"
   },
   "engines": {
     "bun": ">=1.1.0"
