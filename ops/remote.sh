@@ -6,7 +6,7 @@ if [[ -f .env ]]; then set -a; source .env; set +a; fi
 CMD=${1:-status}
 DEPLOY_HOST=${DEPLOY_HOST:-}
 DEPLOY_USER=${DEPLOY_USER:-app}
-DEPLOY_PATH=${DEPLOY_PATH:-/opt/digitalocean-scaffold}
+DEPLOY_PATH=${DEPLOY_PATH:-/opt/vmdrop}
 SERVICE_NAME=${SERVICE_NAME:-doscaffold}
 SSH_KEY=${SSH_KEY:-}
 SSH_PASSWORD=${SSH_PASSWORD:-}

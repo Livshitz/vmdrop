@@ -15,7 +15,7 @@ fi
 DOMAIN=${DOMAIN:-}
 EMAIL=${EMAIL:-}
 SERVICE_NAME=${SERVICE_NAME:-doscaffold}
-APP_DIR=${APP_DIR:-/opt/digitalocean-scaffold}
+APP_DIR=${APP_DIR:-/opt/vmdrop}
 APP_USER=${APP_USER:-app}
 
 if [[ -z "$DOMAIN" || -z "$EMAIL" ]]; then
@@ -58,7 +58,7 @@ if [[ -f "/root/.bun/bin/bun" ]]; then
 fi
 
 "${SUDO:-sudo}" install -m 0644 ops/systemd/doscaffold.service /etc/systemd/system/${SERVICE_NAME}.service
-"${SUDO:-sudo}" sed -i "s|/opt/digitalocean-scaffold|${APP_DIR}|g" /etc/systemd/system/${SERVICE_NAME}.service
+"${SUDO:-sudo}" sed -i "s|/opt/vmdrop|${APP_DIR}|g" /etc/systemd/system/${SERVICE_NAME}.service
 "${SUDO:-sudo}" sed -i "s|^User=app|User=${APP_USER}|" /etc/systemd/system/${SERVICE_NAME}.service
 
 systemctl daemon-reload

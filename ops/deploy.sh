@@ -4,7 +4,7 @@ set -euo pipefail
 # Env vars required:
 #   DEPLOY_HOST, DEPLOY_USER
 # Optional:
-#   DEPLOY_PATH (default /opt/digitalocean-scaffold)
+#   DEPLOY_PATH (default /opt/vmdrop)
 #   SERVICE_NAME (default doscaffold)
 #   SSH_KEY (path to private key)
 
@@ -18,7 +18,7 @@ fi
 
 DEPLOY_HOST=${DEPLOY_HOST:-}
 DEPLOY_USER=${DEPLOY_USER:-}
-DEPLOY_PATH=${DEPLOY_PATH:-/opt/digitalocean-scaffold}
+DEPLOY_PATH=${DEPLOY_PATH:-/opt/vmdrop}
 SERVICE_NAME=${SERVICE_NAME:-doscaffold}
 SSH_KEY_FLAG=${SSH_KEY:+-i "$SSH_KEY"}
 USE_PASSWORD=${USE_PASSWORD:-}

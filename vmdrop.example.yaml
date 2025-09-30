@@ -1,0 +1,44 @@
+droplet:
+  host: 129.212.144.146
+  user: root
+
+ssh:
+  usePassword: true
+  password: "${SSH_PASSWORD}"  # Reference from env or .env file
+  # privateKey: ~/.ssh/id_rsa
+
+app:
+  name: vmdrop
+  dir: /opt/vmdrop
+  user: app
+
+runtime:
+  host: 127.0.0.1
+  port: 3000
+  nodeEnv: production
+  env:
+    # CUSTOM_KEY: value
+
+service:
+  name: vmdrop
+  execStart: /usr/local/bin/bun run src/server.ts
+
+https:
+  domain: agf-api.circlesup.com
+  email: elya.l@7chairs.org
+
+deploy:
+  # path defaults to app.dir
+  excludes:
+    - .git
+    - node_modules
+    - .github
+    - bun.lockb
+
+apt:
+  packages:
+    - ffmpeg
+    # - git
+    # - build-essential
+
+

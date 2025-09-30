@@ -33,8 +33,8 @@ ws.onopen = () => ws.send(JSON.stringify({ type: 'echo', payload: 'hi' }));
 2. SSH to droplet as root and run:
 
 ```bash
-git clone <your repo> /opt/digitalocean-scaffold
-cd /opt/digitalocean-scaffold
+git clone <your repo> /opt/vmdrop
+cd /opt/vmdrop
 
 # Create .env (see below for keys)
 cp env.example .env  # or create manually
@@ -80,7 +80,7 @@ NODE_ENV=production
 
 # Service
 SERVICE_NAME=doscaffold
-APP_DIR=/opt/digitalocean-scaffold
+APP_DIR=/opt/vmdrop
 APP_USER=app
 
 # HTTPS
@@ -90,9 +90,75 @@ EMAIL=you@example.com
 # Deploy
 DEPLOY_HOST=server.example.com
 DEPLOY_USER=app
-DEPLOY_PATH=/opt/digitalocean-scaffold
+DEPLOY_PATH=/opt/vmdrop
 # SSH_KEY used locally; CI injects SSH_PRIVATE_KEY secret
 ```
+
+## VM Drop CLI (vmdrop)
+
+This repo ships a CLI you can run from any Node.js/Bun project to deploy to a DigitalOcean droplet using a simple YAML config.
+
+1) Create `vmdrop.yaml` in your project (see `vmdrop.example.yaml`).
+
+```yaml
+droplet:
+  host: your.server.or.ip
+  user: root
+ssh:
+  usePassword: true
+  password: ${SSH_PASSWORD}  # Reads from .env or environment
+app:
+  name: your-service
+  dir: /opt/your-service
+  user: app
+runtime:
+  port: 3000
+  env:
+    MY_SECRET: ${MY_SECRET}  # Also supports env var substitution
+https:
+  domain: yourdomain.com
+  email: you@domain.com
+apt:
+  packages:
+    - ffmpeg
+```
+
+Create a `.env` file (add to `.gitignore`) with your secrets:
+```bash
+SSH_PASSWORD=your_root_password
+MY_SECRET=secret_value
+```
+
+2) Build the CLI once in this repo:
+
+```bash
+bun run build
+```
+
+3) From any project folder containing `vmdrop.yaml`, run one of:
+
+```bash
+# Bootstrap: provision + deploy + start service
+vmdrop bootstrap
+
+# Provision only
+vmdrop provision
+
+# Deploy only (rsync + restart)
+vmdrop deploy
+
+# Tail logs from remote service
+vmdrop logs
+vmdrop logs --lines 500
+
+# Open interactive SSH session
+vmdrop ssh
+
+# Use a non-default config path
+vmdrop bootstrap --config ./path/to/other.yaml
+```
+
+The CLI reads `vmdrop.yaml` in the current directory by default. It supports password auth via `sshpass` or SSH key via `ssh.privateKey`.
 
 ## One-command bootstrap (self-contained)
 

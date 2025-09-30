@@ -1,11 +1,15 @@
 {
-  "name": "digitalocean-scaffold",
+  "name": "vmdrop",
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "vmdrop": "src/cli/index.ts"
+  },
   "scripts": {
     "dev": "bun run --hot src/server.ts",
     "start": "bun run src/server.ts",
+    "build": "bun build --target bun --sourcemap --outfile=dist/cli.js src/cli/index.ts",
     "lint": "echo 'No linter configured'",
     "bootstrap": "bash ops/bootstrap.sh",
     "provision": "bash ops/remote.sh provision",
@@ -22,5 +26,10 @@
   },
   "devDependencies": {
     "@types/bun": "^1.2.23"
+  },
+  "dependencies": {
+    "yaml": "^2.5.1",
+    "zod": "^3.23.8",
+    "execa": "^9.5.2"
   }
 }

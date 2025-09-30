@@ -4,7 +4,7 @@ set -euo pipefail
 # One-command bootstrap: provision + initial deploy on a fresh droplet
 # Required env in .env or exported:
 #   DEPLOY_HOST, DEPLOY_USER (root for first run is ok), DOMAIN, EMAIL
-# Optional: SSH_PASSWORD (uses sshpass), DEPLOY_PATH (/opt/digitalocean-scaffold), SERVICE_NAME (doscaffold)
+# Optional: SSH_PASSWORD (uses sshpass), DEPLOY_PATH (/opt/vmdrop), SERVICE_NAME (doscaffold)
 
 if [[ -f .env ]]; then
         set -a; source .env; set +a
@@ -12,7 +12,7 @@ fi
 
 DEPLOY_HOST=${DEPLOY_HOST:-}
 DEPLOY_USER=${DEPLOY_USER:-root}
-DEPLOY_PATH=${DEPLOY_PATH:-/opt/digitalocean-scaffold}
+DEPLOY_PATH=${DEPLOY_PATH:-/opt/vmdrop}
 SERVICE_NAME=${SERVICE_NAME:-doscaffold}
 SSH_PASSWORD=${SSH_PASSWORD:-}
 
