@@ -5,6 +5,25 @@ All notable changes to vmdrop will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Help system** (`--help`, `-h`, `-?` flags)
+  - Comprehensive usage information
+  - Lists all commands with descriptions
+  - Shows all available flags
+  - Includes usage examples
+  - Displays supported distributions
+  - Automatically shown when no arguments provided
+
+- **Verbose mode** (`--verbose` or `-v` flag) for detailed progress logging
+  - Shows local dependency checks
+  - Displays SSH connection details
+  - Reports file sync operations and exclusions
+  - Shows environment variable counts
+  - Logs service existence checks
+  - Provides detailed step-by-step progress
+
 ## [0.2.0] - 2025-10-15
 
 ### 🎉 Major Features

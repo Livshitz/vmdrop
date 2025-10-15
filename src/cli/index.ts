@@ -79,6 +79,19 @@ const ConfigSchema = z.object({
 
 type Config = z.infer<typeof ConfigSchema>;
 
+// Global verbose flag
+let VERBOSE = false;
+
+function log(message: string) {
+  console.log(message);
+}
+
+function verbose(message: string) {
+  if (VERBOSE) {
+    console.log(`[verbose] ${message}`);
+  }
+}
+
 function findConfigPath(): string {
   const candidates = [
     "vmdrop.yaml",
@@ -179,11 +192,13 @@ function buildSshBase(cfg: Config): string[] {
 }
 
 async function ensureLocalDeps(cfg: Config) {
+  verbose("Checking local dependencies...");
   const checks = ["ssh", "rsync"];
   if (cfg.ssh.usePassword) checks.push("sshpass");
   for (const bin of checks) {
     try {
       await execa("bash", ["-lc", `command -v ${bin}`]);
+      verbose(`✓ Found ${bin}`);
     } catch {
       throw new Error(
         `${bin} not found locally. Install it and retry${
@@ -192,6 +207,7 @@ async function ensureLocalDeps(cfg: Config) {
       );
     }
   }
+  verbose("All local dependencies satisfied");
 }
 
 function detectPackageManagerScript(): string {
@@ -381,13 +397,19 @@ echo "✅ Provisioning complete!"
 }
 
 async function rsyncProject(cfg: Config) {
+  log("📦 Uploading project files...");
+  verbose(`Syncing to ${cfg.droplet.user}@${cfg.droplet.host}:${cfg.deploy.path}/`);
+  
   const excludes = cfg.deploy.excludes ?? [".git", "node_modules", ".github", "bun.lockb"];
+  verbose(`Excluding: ${excludes.join(", ")}`);
+  
   const excludeArgs = excludes.flatMap((e) => ["--exclude", e]);
   const rsh = cfg.ssh.usePassword
     ? `sshpass -p '${cfg.ssh.password ?? ""}' ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no`
     : cfg.ssh.privateKey
     ? `ssh -i '${cfg.ssh.privateKey}' -o StrictHostKeyChecking=no`
     : "ssh -o StrictHostKeyChecking=no";
+  
   await execa("rsync", [
     "-az",
     "--delete",
@@ -396,7 +418,9 @@ async function rsyncProject(cfg: Config) {
     rsh,
     "./",
     `${cfg.droplet.user}@${cfg.droplet.host}:${cfg.deploy.path}/`,
-  ], { stdio: "inherit" });
+  ], { stdio: VERBOSE ? "inherit" : "pipe" });
+  
+  verbose("✓ Files synced successfully");
 }
 
 async function sshExec(cfg: Config, command: string, opts?: { stdin?: string }) {
@@ -481,8 +505,11 @@ async function readRemoteDotEnv(cfg: Config): Promise<Record<string, string>> {
 }
 
 async function writeDotEnv(cfg: Config) {
+  verbose("Writing .env file to remote...");
+  
   // Read existing .env from remote
   const existingEnv = await readRemoteDotEnv(cfg);
+  verbose(`Found ${Object.keys(existingEnv).length} existing environment variables`);
   
   // Build new env from config
   const pairs: string[] = [];
@@ -513,6 +540,7 @@ async function writeDotEnv(cfg: Config) {
   
   // Merge with existing (new config takes precedence)
   const merged = { ...existingEnv, ...newEnv };
+  verbose(`Writing ${Object.keys(merged).length} environment variables`);
   
   // Build final .env content
   const lines = Object.entries(merged).map(([k, v]) => `${k}=${v}`);
@@ -522,39 +550,56 @@ async function writeDotEnv(cfg: Config) {
     cfg,
     `bash -lc 'cat > ${cfg.deploy.path}/.env <<\ENV\n${dotEnv}ENV'`
   );
+  
+  verbose("✓ .env file updated");
 }
 
 async function provision(cfg: Config) {
-  // ensure remote path exists
+  log("🔧 Provisioning VM...");
+  
+  verbose(`Creating remote directory: ${cfg.deploy.path}`);
   await sshExec(cfg, `mkdir -p '${cfg.deploy.path}'`);
+  
   // upload project source first so .env can live with it
   await rsyncProject(cfg);
+  
   // write .env on remote
   await writeDotEnv(cfg);
 
   // run provisioning script remotely (as root when needed)
+  log("⚙️  Running provisioning script (this may take a few minutes)...");
+  verbose("Detecting package manager and installing dependencies...");
   const script = buildProvisionScript(cfg);
   await sshExec(cfg, "bash -lc 'bash -s'", { stdin: script });
+  
+  log("✅ Provisioning complete");
 }
 
 async function installDepsAndRestart(cfg: Config) {
   const sudo = cfg.droplet.user === "root" ? "" : "sudo ";
   
+  verbose("Checking if service exists...");
   // Check if service exists before trying to restart it
   const checkCmd = `${sudo}systemctl list-unit-files | grep -q "^${cfg.service.name}.service"`;
   const serviceExists = await sshExecQuiet(cfg, checkCmd);
   
   let restartCmd: string;
   if (serviceExists) {
-    console.log(`♻️  Restarting ${cfg.service.name} service...`);
+    log(`♻️  Restarting ${cfg.service.name} service...`);
     restartCmd = `${sudo}systemctl restart ${cfg.service.name}.service`;
   } else {
-    console.log(`🚀 Starting ${cfg.service.name} service for the first time...`);
+    log(`🚀 Starting ${cfg.service.name} service for the first time...`);
     restartCmd = `${sudo}systemctl start ${cfg.service.name}.service`;
   }
   
+  verbose(`Setting ownership to ${cfg.app.user}:${cfg.app.user}`);
+  verbose("Installing dependencies if package.json exists...");
+  verbose("Reloading systemd daemon...");
+  
   const cmd = `${sudo}chown -R ${cfg.app.user}:${cfg.app.user} '${cfg.deploy.path}' && cd '${cfg.deploy.path}' && if command -v bun >/dev/null 2>&1 && [ -f package.json ]; then bun install --production; fi && ${sudo}systemctl daemon-reload && ${restartCmd} && ${sudo}systemctl reload caddy || true && ${sudo}systemctl status ${cfg.service.name}.service | tail -n 40 | cat`;
   await sshExec(cfg, cmd);
+  
+  log("✅ Service started successfully");
 }
 
 async function logs(cfg: Config, lines: number = 200) {
@@ -577,33 +622,104 @@ async function sshInteractive(cfg: Config) {
   }
 }
 
+function showHelp() {
+  console.log(`
+vmdrop - Simple VM deployment tool with multi-distro support
+
+USAGE:
+  vmdrop <command> [flags]
+
+COMMANDS:
+  bootstrap     Provision VM, upload code, and start service (default)
+  provision     Install packages, Bun, Caddy, firewall (no code deployment)
+  deploy        Upload code, update .env, restart service
+  logs          Show service logs from journalctl
+  ssh           Open interactive SSH session to the VM
+
+FLAGS:
+  --config <path>    Use custom config file (default: vmdrop.yaml)
+  --verbose, -v      Show detailed progress information
+  --help, -h, -?     Show this help message
+  --lines <N>        Number of log lines to show (for logs command)
+
+EXAMPLES:
+  # First-time deployment
+  vmdrop bootstrap
+
+  # Deploy with verbose output
+  vmdrop deploy --verbose
+
+  # Use custom config
+  vmdrop bootstrap --config prod.yaml
+
+  # View logs
+  vmdrop logs --lines 500
+
+  # Open SSH session
+  vmdrop ssh
+
+SUPPORTED DISTROS:
+  Ubuntu, Debian, Amazon Linux 2023, Rocky Linux, AlmaLinux, CentOS, Alpine
+
+DOCUMENTATION:
+  https://github.com/Livshitz/vmdrop
+`);
+}
+
 async function main() {
   const args = process.argv.slice(2);
-  const sub = args[0] || "bootstrap";
+  
+  // Check for help flags
+  if (args.length === 0 || args.includes("--help") || args.includes("-h") || args.includes("-?")) {
+    showHelp();
+    process.exit(0);
+  }
+  
+  // Parse flags
+  VERBOSE = args.includes("--verbose") || args.includes("-v");
   const configPath = args.includes("--config") ? args[args.indexOf("--config") + 1] : undefined;
+  
+  // Get command (first non-flag argument)
+  const sub = args.find(arg => !arg.startsWith("-") && arg !== configPath) || "bootstrap";
+  
+  if (VERBOSE) {
+    log("🔍 Verbose mode enabled");
+    verbose(`Command: ${sub}`);
+    verbose(`Config path: ${configPath || "auto-detect"}`);
+  }
+  
   const cfg = readConfig(configPath);
+  verbose(`Loaded config for ${cfg.app.name}`);
+  verbose(`Target: ${cfg.droplet.user}@${cfg.droplet.host}`);
+  
   await ensureLocalDeps(cfg);
 
   switch (sub) {
     case "bootstrap":
+      log("🚀 Running bootstrap (provision + deploy)...");
       await provision(cfg);
       await installDepsAndRestart(cfg);
+      log("\n✅ Bootstrap complete! Your app is now deployed.");
       break;
     case "provision":
       await provision(cfg);
       break;
     case "deploy":
+      log("🚀 Deploying application...");
       await rsyncProject(cfg);
       await writeDotEnv(cfg);
       await installDepsAndRestart(cfg);
+      log("\n✅ Deployment complete!");
       break;
     case "logs": {
       const linesArg = args.includes("--lines") ? args[args.indexOf("--lines") + 1] : undefined;
       const lines = linesArg ? parseInt(linesArg, 10) : 200;
+      verbose(`Fetching ${lines} lines of logs...`);
       await logs(cfg, lines);
       break;
     }
     case "ssh":
+      verbose("Opening SSH connection...");
       await sshInteractive(cfg);
       break;
     default:

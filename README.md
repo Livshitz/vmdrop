@@ -51,6 +51,8 @@ bun run src/cli/index.ts bootstrap --config ./vmdrop.example.yaml
 
 ## Quickstart: deploy your project
 
+**Need help?** Run `bunx vmdrop --help` to see all commands and options.
+
 1) In your app repo, create `vmdrop.yaml` (see the reference below). Minimal example:
 
 ```yaml
@@ -110,7 +112,45 @@ Use with `bunx vmdrop ...` (or `npx vmdrop ...`):
 - `bunx vmdrop ssh` — Open an interactive SSH session to the VM.
 
 Global flags:
-- `--config <path>` — Use a non-default config path (default: `vmdrop.yaml` or `vmdrop.yml`).
+- `--help`, `-h`, `-?` — Show help message with usage information
+- `--config <path>` — Use a non-default config path (default: `vmdrop.yaml` or `vmdrop.yml`)
+- `--verbose` or `-v` — Enable verbose logging to see detailed progress information
+- `--lines <N>` — Number of log lines to show (for `logs` command, default: 200)
+
+### Verbose Mode
+
+For troubleshooting or to see exactly what vmdrop is doing, use the `--verbose` or `-v` flag:
+
+```bash
+bunx vmdrop deploy --verbose
+# or
+bunx vmdrop bootstrap -v
+```
+
+Verbose mode shows:
+- Local dependency checks
+- SSH connection details
+- File sync operations with exclusions
+- Environment variable counts
+- Service existence checks
+- Package installation progress
+- All commands being executed
+
+Example output:
+```
+🔍 Verbose mode enabled
+[verbose] Command: deploy
+[verbose] Config path: auto-detect
+[verbose] Loaded config for myapp
+[verbose] Target: root@203.0.113.10
+[verbose] Checking local dependencies...
+[verbose] ✓ Found ssh
+[verbose] ✓ Found rsync
+📦 Uploading project files...
+[verbose] Syncing to root@203.0.113.10:/opt/myapp/
+[verbose] Excluding: .git, node_modules, .github, bun.lockb
+...
+```
 
 ## Deployment Flow
 
