@@ -1,6 +1,6 @@
 ## VM Drop (vmdrop)
 
-Simple CLI to deploy any Node.js or Bun project to a DigitalOcean droplet or any Ubuntu/Debian VM. It provisions the machine (Bun, Caddy, UFW, systemd), uploads your app via rsync, writes env vars, and keeps your service running under systemd with optional HTTPS via Caddy.
+Simple CLI to deploy any Node.js or Bun project to any Linux VM. It provisions the machine (Bun, Caddy, firewall, systemd), uploads your app via rsync, writes env vars, and keeps your service running under systemd with optional HTTPS via Caddy.
 
 ## Why vmdrop
 
@@ -8,6 +8,8 @@ Simple CLI to deploy any Node.js or Bun project to a DigitalOcean droplet or any
 - One config file, one command
 - Works with password or SSH key auth
 - First-class Bun support, Node.js compatible
+- **Multi-distro support:** Ubuntu/Debian, Amazon Linux, Rocky Linux, AlmaLinux, CentOS, Alpine, and more
+- Auto-detects package manager (apt, dnf, yum, apk)
 
 ## Requirements
 
@@ -17,8 +19,9 @@ Local (your laptop):
 - `sshpass` if using password auth (macOS: `brew install hudochenkov/sshpass/sshpass`)
 
 Remote (your VM):
-- Ubuntu/Debian with `apt`
+- Any modern Linux distribution (Ubuntu, Debian, Amazon Linux 2023, Rocky Linux, AlmaLinux, CentOS, Alpine, etc.)
 - Root or a sudo-capable user for initial provisioning
+- systemd for service management
 
 ## Run (no install)
 
@@ -101,13 +104,37 @@ After DNS propagates, verify your app: `https://yourdomain.com/healthz` (or your
 Use with `bunx vmdrop ...` (or `npx vmdrop ...`):
 
 - `bunx vmdrop bootstrap` — Provision the VM, upload the project, write `.env`, install deps, start/restart systemd service.
-- `bunx vmdrop provision` — Provision only (Bun, Caddy, UFW, systemd unit). Does not deploy code.
+- `bunx vmdrop provision` — Provision only (Bun, Caddy, firewall, systemd unit). Does not deploy code.
 - `bunx vmdrop deploy` — Rsync project, update remote `.env`, install deps, restart service, reload Caddy.
 - `bunx vmdrop logs [--lines N]` — Tail service logs from `journalctl`.
 - `bunx vmdrop ssh` — Open an interactive SSH session to the VM.
 
 Global flags:
 - `--config <path>` — Use a non-default config path (default: `vmdrop.yaml` or `vmdrop.yml`).
+
+## Deployment Flow
+
+### `vmdrop bootstrap` (first-time deployment)
+1. **Connect** - Establish SSH connection to the VM
+2. **Detect** - Auto-detect package manager (apt/dnf/yum/apk)
+3. **Provision** - Install system packages, Bun, Caddy, configure firewall (UFW or firewalld)
+4. **Upload** - Rsync project files to `app.dir`
+5. **Configure** - Create/update remote `.env` file from `runtime.env`
+6. **Service** - Create systemd unit file and enable service
+7. **Start** - Install dependencies (if package.json exists), start service
+8. **HTTPS** - Caddy automatically requests SSL certificate (if `https:` configured)
+
+### `vmdrop deploy` (subsequent updates)
+1. **Upload** - Rsync changed files to remote
+2. **Configure** - Update remote `.env` (merges with existing values)
+3. **Restart** - Install dependencies, restart systemd service
+4. **Reload** - Reload Caddy if Caddyfile changed
+
+### `vmdrop provision` (infrastructure only)
+1. **System** - Install packages, Bun, Caddy, firewall
+2. **Service** - Create systemd unit file
+3. **Firewall** - Configure firewall rules
+4. _(Does not deploy code or start service)_
 
 ### Use from package.json scripts
 
@@ -157,6 +184,11 @@ service:
   #   /usr/local/bin/bun run src/server.ts
   # For Node apps, set a Node start command:
   execStart: /usr/bin/node dist/server.js
+  # Systemd service options (optional, with defaults shown):
+  restart: always           # no, always, on-success, on-failure, on-abnormal, on-abort, on-watchdog
+  restartSec: 2             # seconds to wait before restart
+  environmentFile: /opt/myapp/.env  # defaults to ${app.dir}/.env
+  killSignal: SIGINT        # signal to send on stop
 
 https:                       # optional; omit to expose plain HTTP on :80 through Caddy
   domain: example.com
@@ -168,14 +200,23 @@ deploy:
     - .git
     - node_modules
 
+# Package management (OS-agnostic, auto-detects apt/dnf/yum/apk)
+packages:
+  manager: auto             # auto (default), apt, dnf, yum, or apk
+  list:
+    - ffmpeg                # extra packages to install during provision
+
+# Backward compatible (deprecated, use 'packages:' instead)
 apt:
   packages:
-    - ffmpeg                # extra packages to install during provision
+    - ffmpeg
 ```
 
 Notes:
-- On provision, the CLI installs: curl, ca-certificates, rsync, ufw, caddy, unzip, ffmpeg (+ your extras), sets up a systemd unit, installs Bun, writes `/etc/caddy/Caddyfile`, and opens UFW for 22/80/443 and your app port.
+- **Multi-distro support**: vmdrop auto-detects your package manager (apt, dnf, yum, apk) and works on Ubuntu, Debian, Amazon Linux, Rocky Linux, AlmaLinux, CentOS, Alpine, and more.
+- On provision, the CLI installs base packages (curl, ca-certificates, rsync, unzip) plus your extras, Bun, Caddy, configures firewall (UFW or firewalld), sets up systemd, and writes `/etc/caddy/Caddyfile`.
 - Remote `.env` is merged: existing values are preserved unless overridden by `runtime.env`.
+- Caddy Caddyfile is auto-generated from `https.domain` config and set up as a reverse proxy to your app.
 - Strict host key checking is disabled during automation for convenience.
 
 ## CI/CD

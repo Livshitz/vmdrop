@@ -22,6 +22,11 @@ runtime:
 service:
   name: vmdrop
   execStart: /usr/local/bin/bun run src/server.ts
+  # Optional systemd service configuration (defaults shown):
+  # restart: always            # no, always, on-success, on-failure, on-abnormal, on-abort, on-watchdog
+  # restartSec: 2              # seconds to wait before restart
+  # environmentFile: /opt/vmdrop/.env  # defaults to ${app.dir}/.env
+  # killSignal: SIGINT         # signal to send on stop
 
 https:
   domain: agf-api.circlesup.com
@@ -35,10 +40,18 @@ deploy:
     - .github
     - bun.lockb
 
-apt:
-  packages:
+# Package management (OS-agnostic, auto-detects apt/dnf/yum/apk)
+# Recommended: use 'packages:' for multi-distro compatibility
+packages:
+  manager: auto  # auto (default), apt, dnf, yum, or apk
+  list:
     - ffmpeg
     # - git
     # - build-essential
+
+# Backward compatible (deprecated, use 'packages:' instead)
+# apt:
+#   packages:
+#     - ffmpeg
 
 
