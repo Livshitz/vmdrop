@@ -18146,8 +18146,18 @@ var ConfigSchema = exports_external.object({
   }).default({ host: "127.0.0.1", port: 3000, nodeEnv: "production", env: {} }),
   service: exports_external.object({
     name: exports_external.string().default("doscaffold"),
-    execStart: exports_external.string().default("/usr/local/bin/bun run src/server.ts")
-  }).default({ name: "doscaffold", execStart: "/usr/local/bin/bun run src/server.ts" }),
+    execStart: exports_external.string().default("/usr/local/bin/bun run src/server.ts"),
+    restart: exports_external.enum(["no", "always", "on-success", "on-failure", "on-abnormal", "on-abort", "on-watchdog"]).default("always"),
+    restartSec: exports_external.coerce.number().int().positive().default(2),
+    environmentFile: exports_external.string().optional(),
+    killSignal: exports_external.string().default("SIGINT")
+  }).default({
+    name: "doscaffold",
+    execStart: "/usr/local/bin/bun run src/server.ts",
+    restart: "always",
+    restartSec: 2,
+    killSignal: "SIGINT"
+  }),
   https: exports_external.object({
     domain: exports_external.string().min(1),
     email: exports_external.string().min(3)
@@ -18156,10 +18166,23 @@ var ConfigSchema = exports_external.object({
     path: exports_external.string().optional(),
     excludes: exports_external.array(exports_external.string()).default([".git", "node_modules", ".github", "bun.lockb"]).optional()
   }).default({}),
+  packages: exports_external.object({
+    manager: exports_external.enum(["auto", "apt", "dnf", "yum", "apk"]).default("auto"),
+    list: exports_external.array(exports_external.string()).default([])
+  }).default({ manager: "auto", list: [] }),
   apt: exports_external.object({
     packages: exports_external.array(exports_external.string()).default([])
-  }).default({ packages: [] })
+  }).optional()
 });
+var VERBOSE = false;
+function log(message) {
+  console.log(message);
+}
+function verbose(message) {
+  if (VERBOSE) {
+    console.log(`[verbose] ${message}`);
+  }
+}
 function findConfigPath() {
   const candidates = [
     "vmdrop.yaml",
@@ -18224,6 +18247,9 @@ function readConfig(customPath) {
   const parsed = $parse(raw);
   const expanded = expandEnvVars(parsed);
   const cfg = ConfigSchema.parse(expanded);
+  if (cfg.apt && cfg.apt.packages.length > 0) {
+    cfg.packages.list = [...new Set([...cfg.packages.list, ...cfg.apt.packages])];
+  }
   if (!cfg.deploy.path) {
     cfg.deploy.path = cfg.app.dir;
   }
@@ -18240,16 +18266,38 @@ function buildSshBase(cfg) {
   return base;
 }
 async function ensureLocalDeps(cfg) {
+  verbose("Checking local dependencies...");
   const checks = ["ssh", "rsync"];
   if (cfg.ssh.usePassword)
     checks.push("sshpass");
   for (const bin of checks) {
     try {
       await execa("bash", ["-lc", `command -v ${bin}`]);
+      verbose(`\u2713 Found ${bin}`);
     } catch {
       throw new Error(`${bin} not found locally. Install it and retry${bin === "sshpass" ? " (e.g., brew install hudochenkov/sshpass/sshpass)" : ""}.`);
     }
   }
+  verbose("All local dependencies satisfied");
+}
+function detectPackageManagerScript() {
+  return `
+detect_package_manager() {
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "apt"
+  elif command -v dnf >/dev/null 2>&1; then
+    echo "dnf"
+  elif command -v yum >/dev/null 2>&1; then
+    echo "yum"
+  elif command -v apk >/dev/null 2>&1; then
+    echo "apk"
+  else
+    echo "\u274C Error: No supported package manager found (apt/dnf/yum/apk)" >&2
+    echo "Detected OS: $(uname -a)" >&2
+    exit 1
+  fi
+}
+`;
 }
 function buildProvisionScript(cfg) {
   const needsHttps = !!cfg.https;
@@ -18263,16 +18311,15 @@ function buildProvisionScript(cfg) {
   for (const [k, v] of Object.entries(cfg.runtime.env || {})) {
     runtimeEnvLines.push(`Environment=${k}=${v}`);
   }
-  const defaultApt = [
+  const userPackages = cfg.packages.list.length > 0 ? cfg.packages.list : cfg.apt?.packages ?? [];
+  const defaultPackages = [
     "curl",
     "ca-certificates",
     "rsync",
     "ufw",
-    "caddy",
-    "unzip",
-    "ffmpeg"
+    "unzip"
   ];
-  const apt = Array.from(new Set([...defaultApt, ...cfg.apt.packages]));
+  const allPackages = Array.from(new Set([...defaultPackages, ...userPackages]));
   const sudo = cfg.droplet.user === "root" ? "" : "sudo ";
   const caddyBlock = needsHttps ? `
 {
@@ -18290,6 +18337,7 @@ ${domain} {
 }
 
 `;
+  const envFile = cfg.service.environmentFile ?? `${cfg.app.dir}/.env`;
   const systemdUnit = `
 [Unit]
 Description=${cfg.app.name} Service
@@ -18300,11 +18348,11 @@ User=${cfg.app.user}
 WorkingDirectory=${cfg.app.dir}
 ${runtimeEnvLines.join(`
 `)}
-EnvironmentFile=${cfg.app.dir}/.env
+EnvironmentFile=${envFile}
 ExecStart=${cfg.service.execStart}
-Restart=always
-RestartSec=2
-KillSignal=SIGINT
+Restart=${cfg.service.restart}
+RestartSec=${cfg.service.restartSec}
+KillSignal=${cfg.service.killSignal}
 
 [Install]
 WantedBy=multi-user.target
@@ -18312,19 +18360,86 @@ WantedBy=multi-user.target
   return `set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
-wait_for_apt() {
-  while pgrep -x apt >/dev/null 2>&1 || pgrep -x apt-get >/dev/null 2>&1 || pgrep -x dpkg >/dev/null 2>&1; do
-    echo "Waiting for apt lock..." >&2
-    sleep 5
-  done
+${detectPackageManagerScript()}
+
+PKG_MGR=$(detect_package_manager)
+echo "\u2713 Detected package manager: $PKG_MGR"
+
+wait_for_lock() {
+  if [ "$PKG_MGR" = "apt" ]; then
+    while pgrep -x apt >/dev/null 2>&1 || pgrep -x apt-get >/dev/null 2>&1 || pgrep -x dpkg >/dev/null 2>&1; do
+      echo "Waiting for package manager lock..." >&2
+      sleep 5
+    done
+  fi
 }
 
-wait_for_apt
-${sudo}apt-get update -y
-wait_for_apt
-${sudo}apt-get upgrade -y
-wait_for_apt
-${sudo}apt-get install -y ${apt.join(" ")}
+install_packages() {
+  wait_for_lock
+  case "$PKG_MGR" in
+    apt)
+      ${sudo}apt-get update -y
+      wait_for_lock
+      ${sudo}apt-get upgrade -y
+      wait_for_lock
+      ${sudo}apt-get install -y "$@"
+      ;;
+    dnf)
+      ${sudo}dnf check-update -y || true
+      ${sudo}dnf upgrade -y
+      ${sudo}dnf install -y "$@"
+      ;;
+    yum)
+      ${sudo}yum check-update -y || true
+      ${sudo}yum upgrade -y
+      ${sudo}yum install -y "$@"
+      ;;
+    apk)
+      ${sudo}apk update
+      ${sudo}apk upgrade
+      ${sudo}apk add "$@"
+      ;;
+  esac
+}
+
+# Install base packages
+install_packages ${allPackages.join(" ")}
+
+# Install Caddy (distro-specific)
+echo "Installing Caddy..."
+if ! command -v caddy >/dev/null 2>&1; then
+  case "$PKG_MGR" in
+    apt)
+      ${sudo}apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
+      curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | ${sudo}gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+      curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | ${sudo}tee /etc/apt/sources.list.d/caddy-stable.list
+      wait_for_lock
+      ${sudo}apt-get update -y
+      wait_for_lock
+      ${sudo}apt-get install -y caddy
+      ;;
+    dnf|yum)
+      ${sudo}$PKG_MGR install -y 'dnf-command(copr)' 2>/dev/null || true
+      ${sudo}$PKG_MGR copr enable @caddy/caddy -y 2>/dev/null || true
+      ${sudo}$PKG_MGR install -y caddy 2>/dev/null || {
+        echo "Installing Caddy from binary..."
+        curl -o /tmp/caddy.tar.gz -L "https://caddyserver.com/api/download?os=linux&arch=amd64"
+        ${sudo}tar -xzf /tmp/caddy.tar.gz -C /usr/local/bin caddy
+        ${sudo}chmod +x /usr/local/bin/caddy
+        rm /tmp/caddy.tar.gz
+      }
+      ;;
+    apk)
+      ${sudo}apk add caddy 2>/dev/null || {
+        echo "Installing Caddy from binary..."
+        curl -o /tmp/caddy.tar.gz -L "https://caddyserver.com/api/download?os=linux&arch=amd64"
+        ${sudo}tar -xzf /tmp/caddy.tar.gz -C /usr/local/bin caddy
+        ${sudo}chmod +x /usr/local/bin/caddy
+        rm /tmp/caddy.tar.gz
+      }
+      ;;
+  esac
+fi
 
 # Create app user
 if ! id -u "${cfg.app.user}" >/dev/null 2>&1; then
@@ -18355,16 +18470,32 @@ ${caddyBlock}CADDY'
 ${sudo}systemctl enable caddy || true
 ${sudo}systemctl restart caddy || true
 
-# UFW basic rules
-${sudo}ufw allow OpenSSH || true
-${sudo}ufw allow 80/tcp || true
-${sudo}ufw allow 443/tcp || true
-${sudo}ufw allow ${cfg.runtime.port}/tcp || true
-${sudo}ufw --force enable || true
+# Firewall configuration
+echo "Configuring firewall..."
+if command -v ufw >/dev/null 2>&1; then
+  ${sudo}ufw allow OpenSSH || true
+  ${sudo}ufw allow 80/tcp || true
+  ${sudo}ufw allow 443/tcp || true
+  ${sudo}ufw allow ${cfg.runtime.port}/tcp || true
+  ${sudo}ufw --force enable || true
+elif command -v firewall-cmd >/dev/null 2>&1; then
+  ${sudo}firewall-cmd --permanent --add-service=ssh || true
+  ${sudo}firewall-cmd --permanent --add-service=http || true
+  ${sudo}firewall-cmd --permanent --add-service=https || true
+  ${sudo}firewall-cmd --permanent --add-port=${cfg.runtime.port}/tcp || true
+  ${sudo}firewall-cmd --reload || true
+else
+  echo "\u26A0\uFE0F  No firewall detected (ufw/firewalld). Skipping firewall configuration."
+fi
+
+echo "\u2705 Provisioning complete!"
 `;
 }
 async function rsyncProject(cfg) {
+  log("\uD83D\uDCE6 Uploading project files...");
+  verbose(`Syncing to ${cfg.droplet.user}@${cfg.droplet.host}:${cfg.deploy.path}/`);
   const excludes = cfg.deploy.excludes ?? [".git", "node_modules", ".github", "bun.lockb"];
+  verbose(`Excluding: ${excludes.join(", ")}`);
   const excludeArgs = excludes.flatMap((e) => ["--exclude", e]);
   const rsh = cfg.ssh.usePassword ? `sshpass -p '${cfg.ssh.password ?? ""}' ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no` : cfg.ssh.privateKey ? `ssh -i '${cfg.ssh.privateKey}' -o StrictHostKeyChecking=no` : "ssh -o StrictHostKeyChecking=no";
   await execa("rsync", [
@@ -18375,7 +18506,8 @@ async function rsyncProject(cfg) {
     rsh,
     "./",
     `${cfg.droplet.user}@${cfg.droplet.host}:${cfg.deploy.path}/`
-  ], { stdio: "inherit" });
+  ], { stdio: VERBOSE ? "inherit" : "pipe" });
+  verbose("\u2713 Files synced successfully");
 }
 async function sshExec(cfg, command, opts) {
   const base = buildSshBase(cfg);
@@ -18390,6 +18522,24 @@ async function sshExec(cfg, command, opts) {
       stdio: opts?.stdin ? ["pipe", "inherit", "inherit"] : "inherit",
       input: opts?.stdin
     });
+  }
+}
+async function sshExecQuiet(cfg, command) {
+  const base = buildSshBase(cfg);
+  const dest = `${cfg.droplet.user}@${cfg.droplet.host}`;
+  try {
+    if (cfg.ssh.usePassword) {
+      await execa("sshpass", ["-p", cfg.ssh.password ?? "", "ssh", ...base, dest, command], {
+        stdio: "pipe"
+      });
+    } else {
+      await execa("ssh", [...base, dest, command], {
+        stdio: "pipe"
+      });
+    }
+    return true;
+  } catch {
+    return false;
   }
 }
 async function readRemoteDotEnv(cfg) {
@@ -18422,7 +18572,9 @@ async function readRemoteDotEnv(cfg) {
   }
 }
 async function writeDotEnv(cfg) {
+  verbose("Writing .env file to remote...");
   const existingEnv = await readRemoteDotEnv(cfg);
+  verbose(`Found ${Object.keys(existingEnv).length} existing environment variables`);
   const pairs = [];
   pairs.push(`HOST=${cfg.runtime.host}`);
   pairs.push(`PORT=${cfg.runtime.port}`);
@@ -18445,24 +18597,46 @@ async function writeDotEnv(cfg) {
     newEnv[k] = v;
   }
   const merged = { ...existingEnv, ...newEnv };
+  verbose(`Writing ${Object.keys(merged).length} environment variables`);
   const lines = Object.entries(merged).map(([k, v]) => `${k}=${v}`);
   const dotEnv = lines.join(`
 `) + `
 `;
   await sshExec(cfg, `bash -lc 'cat > ${cfg.deploy.path}/.env <<ENV
 ${dotEnv}ENV'`);
+  verbose("\u2713 .env file updated");
 }
 async function provision(cfg) {
+  log("\uD83D\uDD27 Provisioning VM...");
+  verbose(`Creating remote directory: ${cfg.deploy.path}`);
   await sshExec(cfg, `mkdir -p '${cfg.deploy.path}'`);
   await rsyncProject(cfg);
   await writeDotEnv(cfg);
+  log("\u2699\uFE0F  Running provisioning script (this may take a few minutes)...");
+  verbose("Detecting package manager and installing dependencies...");
   const script = buildProvisionScript(cfg);
   await sshExec(cfg, "bash -lc 'bash -s'", { stdin: script });
+  log("\u2705 Provisioning complete");
 }
 async function installDepsAndRestart(cfg) {
   const sudo = cfg.droplet.user === "root" ? "" : "sudo ";
-  const cmd = `${sudo}chown -R ${cfg.app.user}:${cfg.app.user} '${cfg.deploy.path}' && cd '${cfg.deploy.path}' && if command -v bun >/dev/null 2>&1 && [ -f package.json ]; then bun install --production; fi && ${sudo}systemctl daemon-reload && ${sudo}systemctl restart ${cfg.service.name}.service && ${sudo}systemctl reload caddy || true && ${sudo}systemctl status ${cfg.service.name}.service | tail -n 40 | cat`;
+  verbose("Checking if service exists...");
+  const checkCmd = `${sudo}systemctl list-unit-files | grep -q "^${cfg.service.name}.service"`;
+  const serviceExists = await sshExecQuiet(cfg, checkCmd);
+  let restartCmd;
+  if (serviceExists) {
+    log(`\u267B\uFE0F  Restarting ${cfg.service.name} service...`);
+    restartCmd = `${sudo}systemctl restart ${cfg.service.name}.service`;
+  } else {
+    log(`\uD83D\uDE80 Starting ${cfg.service.name} service for the first time...`);
+    restartCmd = `${sudo}systemctl start ${cfg.service.name}.service`;
+  }
+  verbose(`Setting ownership to ${cfg.app.user}:${cfg.app.user}`);
+  verbose("Installing dependencies if package.json exists...");
+  verbose("Reloading systemd daemon...");
+  const cmd = `${sudo}chown -R ${cfg.app.user}:${cfg.app.user} '${cfg.deploy.path}' && cd '${cfg.deploy.path}' && if command -v bun >/dev/null 2>&1 && [ -f package.json ]; then bun install --production; fi && ${sudo}systemctl daemon-reload && ${restartCmd} && ${sudo}systemctl reload caddy || true && ${sudo}systemctl status ${cfg.service.name}.service | tail -n 40 | cat`;
   await sshExec(cfg, cmd);
+  log("\u2705 Service started successfully");
 }
 async function logs(cfg, lines = 200) {
   const sudo = cfg.droplet.user === "root" ? "" : "sudo ";
@@ -18482,32 +18656,95 @@ async function sshInteractive(cfg) {
     });
   }
 }
+function showHelp() {
+  console.log(`
+vmdrop - Simple VM deployment tool with multi-distro support
+
+USAGE:
+  vmdrop <command> [flags]
+
+COMMANDS:
+  bootstrap     Provision VM, upload code, and start service (default)
+  provision     Install packages, Bun, Caddy, firewall (no code deployment)
+  deploy        Upload code, update .env, restart service
+  logs          Show service logs from journalctl
+  ssh           Open interactive SSH session to the VM
+
+FLAGS:
+  --config <path>    Use custom config file (default: vmdrop.yaml)
+  --verbose, -v      Show detailed progress information
+  --help, -h, -?     Show this help message
+  --lines <N>        Number of log lines to show (for logs command)
+
+EXAMPLES:
+  # First-time deployment
+  vmdrop bootstrap
+
+  # Deploy with verbose output
+  vmdrop deploy --verbose
+
+  # Use custom config
+  vmdrop bootstrap --config prod.yaml
+
+  # View logs
+  vmdrop logs --lines 500
+
+  # Open SSH session
+  vmdrop ssh
+
+SUPPORTED DISTROS:
+  Ubuntu, Debian, Amazon Linux 2023, Rocky Linux, AlmaLinux, CentOS, Alpine
+
+DOCUMENTATION:
+  https://github.com/Livshitz/vmdrop
+`);
+}
 async function main() {
   const args = process.argv.slice(2);
-  const sub = args[0] || "bootstrap";
+  if (args.length === 0 || args.includes("--help") || args.includes("-h") || args.includes("-?")) {
+    showHelp();
+    process.exit(0);
+  }
+  VERBOSE = args.includes("--verbose") || args.includes("-v");
   const configPath = args.includes("--config") ? args[args.indexOf("--config") + 1] : undefined;
+  const sub = args.find((arg) => !arg.startsWith("-") && arg !== configPath) || "bootstrap";
+  if (VERBOSE) {
+    log("\uD83D\uDD0D Verbose mode enabled");
+    verbose(`Command: ${sub}`);
+    verbose(`Config path: ${configPath || "auto-detect"}`);
+  }
   const cfg = readConfig(configPath);
+  verbose(`Loaded config for ${cfg.app.name}`);
+  verbose(`Target: ${cfg.droplet.user}@${cfg.droplet.host}`);
   await ensureLocalDeps(cfg);
   switch (sub) {
     case "bootstrap":
+      log("\uD83D\uDE80 Running bootstrap (provision + deploy)...");
       await provision(cfg);
       await installDepsAndRestart(cfg);
+      log(`
+\u2705 Bootstrap complete! Your app is now deployed.`);
       break;
     case "provision":
       await provision(cfg);
       break;
     case "deploy":
+      log("\uD83D\uDE80 Deploying application...");
       await rsyncProject(cfg);
       await writeDotEnv(cfg);
       await installDepsAndRestart(cfg);
+      log(`
+\u2705 Deployment complete!`);
       break;
     case "logs": {
       const linesArg = args.includes("--lines") ? args[args.indexOf("--lines") + 1] : undefined;
       const lines = linesArg ? parseInt(linesArg, 10) : 200;
+      verbose(`Fetching ${lines} lines of logs...`);
       await logs(cfg, lines);
       break;
     }
     case "ssh":
+      verbose("Opening SSH connection...");
       await sshInteractive(cfg);
       break;
     default:
@@ -18516,9 +18753,60 @@ async function main() {
   }
 }
 main().catch((err) => {
-  console.error(err?.stderr || err?.message || err);
+  console.error(`
+\u274C Error during deployment:
+`);
+  const stderr = err?.stderr || "";
+  const message = err?.message || "";
+  const fullError = stderr || message || err;
+  if (fullError.includes("apt-get: command not found")) {
+    console.error(`Package manager 'apt-get' not found.
+`);
+    console.error("\uD83D\uDCA1 This usually means you're on a non-Debian-based distribution.");
+    console.error("   vmdrop now supports multiple package managers (apt/dnf/yum/apk).");
+    console.error(`
+Solution:`);
+    console.error("   Update vmdrop to the latest version: bunx vmdrop@latest");
+    console.error(`   Or use the new 'packages:' config section instead of 'apt:'
+`);
+  } else if (fullError.includes("Permission denied")) {
+    console.error(`Permission denied.
+`);
+    console.error("\uD83D\uDCA1 Check your SSH credentials and ensure the user has sudo access.");
+    console.error(`
+Troubleshooting:`);
+    console.error("   1. Verify ssh.password or ssh.privateKey in vmdrop.yaml");
+    console.error("   2. Ensure droplet.user has sudo privileges");
+    console.error(`   3. Try: bunx vmdrop ssh  (to test SSH connection)
+`);
+  } else if (fullError.includes("Could not resolve hostname")) {
+    console.error(`Could not resolve hostname.
+`);
+    console.error("\uD83D\uDCA1 Check your droplet.host in vmdrop.yaml");
+    console.error(`
+Troubleshooting:`);
+    console.error("   1. Verify the IP address or hostname is correct");
+    console.error(`   2. Check your network connection
+`);
+  } else if (fullError.includes("sshpass: command not found")) {
+    console.error(`sshpass not found.
+`);
+    console.error("\uD83D\uDCA1 sshpass is required for password authentication.");
+    console.error(`
+Install sshpass:`);
+    console.error("   macOS:  brew install hudochenkov/sshpass/sshpass");
+    console.error("   Linux:  sudo apt-get install sshpass");
+    console.error(`   Or use SSH key authentication instead
+`);
+  } else {
+    console.error(fullError);
+  }
+  console.error(`
+\uD83D\uDCDA Need help? Check the docs or open an issue:`);
+  console.error(`   https://github.com/Livshitz/vmdrop
+`);
   process.exit(1);
 });
 
-//# debugId=8FF6029B3B877D7A64756E2164756E21
+//# debugId=7850F2804EC23F2C64756E2164756E21
 //# sourceMappingURL=cli.js.map
