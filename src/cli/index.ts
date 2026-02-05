@@ -28,11 +28,13 @@ const ConfigSchema = z.object({
       host: z.string().default("127.0.0.1"),
       port: z.coerce.number().int().positive().default(3000),
       nodeEnv: z.string().default("production"),
+      node: z.union([z.boolean(), z.coerce.number()]).default(false),
       env: z
         .preprocess((val) => (val == null ? {} : val), z.record(z.string()))
         .default({}),
     })
-    .default({ host: "127.0.0.1", port: 3000, nodeEnv: "production", env: {} }),
+    .default({ host: "127.0.0.1", port: 3000, nodeEnv: "production", node: false, env: {} }),
+  postScript: z.string().optional(),
   service: z
     .object({
       name: z.string().default("doscaffold"),
@@ -362,7 +364,35 @@ fi
 if [[ -f "/root/.bun/bin/bun" ]]; then
   ${sudo}install -m 0755 "/root/.bun/bin/bun" /usr/local/bin/bun || true
 fi
-
+${(() => {
+  if (cfg.runtime.node === false) return '';
+  const ver = cfg.runtime.node === true ? 22 : cfg.runtime.node;
+  return `
+# Install Node.js ${ver}
+if ! command -v node >/dev/null 2>&1 || ! node -v | grep -q "^v${ver}"; then
+  echo "Installing Node.js ${ver}..."
+  case "\\$PKG_MGR" in
+    apt)
+      curl -fsSL https://deb.nodesource.com/setup_${ver}.x | ${sudo}bash -
+      wait_for_lock
+      ${sudo}apt-get install -y nodejs
+      ;;
+    dnf)
+      curl -fsSL https://rpm.nodesource.com/setup_${ver}.x | ${sudo}bash -
+      ${sudo}dnf install -y nodejs
+      ;;
+    yum)
+      curl -fsSL https://rpm.nodesource.com/setup_${ver}.x | ${sudo}bash -
+      ${sudo}yum install -y nodejs
+      ;;
+    apk)
+      ${sudo}apk add nodejs npm
+      ;;
+  esac
+  echo "✓ Node.js $(node -v) installed"
+fi
+`;
+})()}
 # Install systemd unit
 ${sudo}bash -lc 'cat > /etc/systemd/system/${cfg.service.name}.service <<\UNIT\n${systemdUnit}UNIT'
 ${sudo}systemctl daemon-reload
@@ -392,6 +422,7 @@ else
   echo "⚠️  No firewall detected (ufw/firewalld). Skipping firewall configuration."
 fi
 
+${cfg.postScript ? `# Run postScript\necho "Running postScript..."\n${cfg.postScript}\necho "✓ postScript complete"` : ''}
 echo "✅ Provisioning complete!"
 `;
 }

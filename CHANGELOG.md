@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Node.js provisioning** (`runtime.node`) — install Node.js during provisioning
+  - `true` installs LTS (v22), or specify a major version: `18`, `20`, `22`
+  - Uses NodeSource PPA/RPM on apt/dnf/yum, distro packages on Alpine
+  - `false` (default) skips Node.js installation
+- **postScript** — top-level field for custom bash commands appended at end of provisioning
+  - Useful for `npm install -g ...`, firewall tweaks, or any custom setup
+
 - **Help system** (`--help`, `-h`, `-?` flags)
   - Comprehensive usage information
   - Lists all commands with descriptions

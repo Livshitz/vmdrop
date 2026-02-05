@@ -16,8 +16,13 @@ runtime:
   host: 127.0.0.1
   port: 3000
   nodeEnv: production
+  # node: false               # false (skip), true (LTS v22), or 18/20/22 (specific version)
   env:
     # CUSTOM_KEY: value
+
+# postScript: |              # bash commands to run at end of provisioning
+#   npm install -g some-tool
+#   echo "custom setup done"
 
 service:
   name: vmdrop

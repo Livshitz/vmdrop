@@ -215,6 +215,7 @@ runtime:
   host: 127.0.0.1           # binds your app behind Caddy
   port: 3000
   nodeEnv: production
+  node: false                # false (skip), true (LTS v22), or 18/20/22 (specific version)
   env:                       # merged into remote .env; config wins on conflicts
     MY_SECRET: ${MY_SECRET}
 
@@ -246,6 +247,10 @@ packages:
   list:
     - ffmpeg                # extra packages to install during provision
 
+postScript: |               # optional bash commands to run at end of provisioning
+  npm install -g some-tool
+  echo "custom setup done"
+
 # Backward compatible (deprecated, use 'packages:' instead)
 apt:
   packages:
@@ -255,6 +260,8 @@ apt:
 Notes:
 - **Multi-distro support**: vmdrop auto-detects your package manager (apt, dnf, yum, apk) and works on Ubuntu, Debian, Amazon Linux, Rocky Linux, AlmaLinux, CentOS, Alpine, and more.
 - On provision, the CLI installs base packages (curl, ca-certificates, rsync, unzip) plus your extras, Bun, Caddy, configures firewall (UFW or firewalld), sets up systemd, and writes `/etc/caddy/Caddyfile`.
+- **Node.js**: set `runtime.node: true` to install Node.js LTS (v22), or specify a major version like `18`, `20`, `22`. Omit or set `false` to skip. Uses NodeSource on apt/dnf/yum; distro packages on Alpine.
+- **postScript**: arbitrary bash commands appended at the end of provisioning — useful for installing global tools (`npm install -g ...`), firewall tweaks, or custom setup.
 - Remote `.env` is merged: existing values are preserved unless overridden by `runtime.env`.
 - Caddy Caddyfile is auto-generated from `https.domain` config and set up as a reverse proxy to your app.
 - Strict host key checking is disabled during automation for convenience.
