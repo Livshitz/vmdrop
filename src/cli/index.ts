@@ -627,7 +627,7 @@ async function installDepsAndRestart(cfg: Config) {
   verbose("Installing dependencies if package.json exists...");
   verbose("Reloading systemd daemon...");
   
-  const cmd = `${sudo}chown -R ${cfg.app.user}:${cfg.app.user} '${cfg.deploy.path}' && cd '${cfg.deploy.path}' && if command -v bun >/dev/null 2>&1 && [ -f package.json ]; then bun install --production; fi && ${sudo}systemctl daemon-reload && ${restartCmd} && ${sudo}systemctl reload caddy || true && ${sudo}systemctl status ${cfg.service.name}.service | tail -n 40 | cat`;
+  const cmd = `${sudo}chown -R ${cfg.app.user}:${cfg.app.user} '${cfg.deploy.path}' && cd '${cfg.deploy.path}' && if [ -f package.json ]; then bash -lc 'cd ${cfg.deploy.path} && bun install --production'; fi && ${sudo}systemctl daemon-reload && ${restartCmd} && ${sudo}systemctl reload caddy || true && ${sudo}systemctl status ${cfg.service.name}.service | tail -n 40 | cat`;
   await sshExec(cfg, cmd);
   
   log("✅ Service started successfully");
