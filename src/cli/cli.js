@@ -18562,7 +18562,10 @@ async function readRemoteDotEnv(cfg) {
       const eqIdx = trimmed.indexOf("=");
       if (eqIdx > 0) {
         const key = trimmed.substring(0, eqIdx);
-        const value = trimmed.substring(eqIdx + 1);
+        let value = trimmed.substring(eqIdx + 1);
+        if ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"'))) {
+          value = value.slice(1, -1);
+        }
         env[key] = value;
       }
     }
@@ -18598,12 +18601,14 @@ async function writeDotEnv(cfg) {
   }
   const merged = { ...existingEnv, ...newEnv };
   verbose(`Writing ${Object.keys(merged).length} environment variables`);
-  const lines = Object.entries(merged).map(([k, v]) => `${k}=${v}`);
+  const lines = Object.entries(merged).map(([k, v]) => {
+    const needsQuoting = /[{}"'\s$`\\!#]/.test(v);
+    return needsQuoting ? `${k}='${v.replace(/'/g, "'\\''")}'` : `${k}=${v}`;
+  });
   const dotEnv = lines.join(`
 `) + `
 `;
-  await sshExec(cfg, `bash -lc 'cat > ${cfg.deploy.path}/.env <<ENV
-${dotEnv}ENV'`);
+  await sshExec(cfg, `cat > ${cfg.deploy.path}/.env <<'ENV'\n${dotEnv}ENV`);
   verbose("\u2713 .env file updated");
 }
 async function provision(cfg) {

@@ -525,7 +525,11 @@ async function readRemoteDotEnv(cfg: Config): Promise<Record<string, string>> {
       const eqIdx = trimmed.indexOf("=");
       if (eqIdx > 0) {
         const key = trimmed.substring(0, eqIdx);
-        const value = trimmed.substring(eqIdx + 1);
+        let value = trimmed.substring(eqIdx + 1);
+        // Strip surrounding quotes (single or double) to get raw value
+        if ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"'))) {
+          value = value.slice(1, -1);
+        }
         env[key] = value;
       }
     }
@@ -573,13 +577,17 @@ async function writeDotEnv(cfg: Config) {
   const merged = { ...existingEnv, ...newEnv };
   verbose(`Writing ${Object.keys(merged).length} environment variables`);
   
-  // Build final .env content
-  const lines = Object.entries(merged).map(([k, v]) => `${k}=${v}`);
+  // Build final .env content — quote values that contain special chars
+  const lines = Object.entries(merged).map(([k, v]) => {
+    const needsQuoting = /[{}"'\s$`\\!#]/.test(v);
+    return needsQuoting ? `${k}='${v.replace(/'/g, "'\\''")}'` : `${k}=${v}`;
+  });
   const dotEnv = lines.join("\n") + "\n";
-  
+
+  // Use quoted heredoc (<<'ENV') to prevent shell expansion
   await sshExec(
     cfg,
-    `bash -lc 'cat > ${cfg.deploy.path}/.env <<\ENV\n${dotEnv}ENV'`
+    `cat > ${cfg.deploy.path}/.env <<'ENV'\n${dotEnv}ENV`
   );
   
   verbose("✓ .env file updated");
