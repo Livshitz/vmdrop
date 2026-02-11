@@ -18142,8 +18142,10 @@ var ConfigSchema = exports_external.object({
     host: exports_external.string().default("127.0.0.1"),
     port: exports_external.coerce.number().int().positive().default(3000),
     nodeEnv: exports_external.string().default("production"),
+    node: exports_external.union([exports_external.boolean(), exports_external.coerce.number()]).default(false),
     env: exports_external.preprocess((val) => val == null ? {} : val, exports_external.record(exports_external.string())).default({})
-  }).default({ host: "127.0.0.1", port: 3000, nodeEnv: "production", env: {} }),
+  }).default({ host: "127.0.0.1", port: 3000, nodeEnv: "production", node: false, env: {} }),
+  postScript: exports_external.string().optional(),
   service: exports_external.object({
     name: exports_external.string().default("doscaffold"),
     execStart: exports_external.string().default("/usr/local/bin/bun run src/server.ts"),
@@ -18456,7 +18458,36 @@ fi
 if [[ -f "/root/.bun/bin/bun" ]]; then
   ${sudo}install -m 0755 "/root/.bun/bin/bun" /usr/local/bin/bun || true
 fi
-
+${(() => {
+    if (cfg.runtime.node === false)
+      return "";
+    const ver = cfg.runtime.node === true ? 22 : cfg.runtime.node;
+    return `
+# Install Node.js ${ver}
+if ! command -v node >/dev/null 2>&1 || ! node -v | grep -q "^v${ver}"; then
+  echo "Installing Node.js ${ver}..."
+  case "\\$PKG_MGR" in
+    apt)
+      curl -fsSL https://deb.nodesource.com/setup_${ver}.x | ${sudo}bash -
+      wait_for_lock
+      ${sudo}apt-get install -y nodejs
+      ;;
+    dnf)
+      curl -fsSL https://rpm.nodesource.com/setup_${ver}.x | ${sudo}bash -
+      ${sudo}dnf install -y nodejs
+      ;;
+    yum)
+      curl -fsSL https://rpm.nodesource.com/setup_${ver}.x | ${sudo}bash -
+      ${sudo}yum install -y nodejs
+      ;;
+    apk)
+      ${sudo}apk add nodejs npm
+      ;;
+  esac
+  echo "\u2713 Node.js $(node -v) installed"
+fi
+`;
+  })()}
 # Install systemd unit
 ${sudo}bash -lc 'cat > /etc/systemd/system/${cfg.service.name}.service <<UNIT
 ${systemdUnit}UNIT'
@@ -18488,6 +18519,10 @@ else
   echo "\u26A0\uFE0F  No firewall detected (ufw/firewalld). Skipping firewall configuration."
 fi
 
+${cfg.postScript ? `# Run postScript
+echo "Running postScript..."
+${cfg.postScript}
+echo "\u2713 postScript complete"` : ""}
 echo "\u2705 Provisioning complete!"
 `;
 }
@@ -18563,7 +18598,7 @@ async function readRemoteDotEnv(cfg) {
       if (eqIdx > 0) {
         const key = trimmed.substring(0, eqIdx);
         let value = trimmed.substring(eqIdx + 1);
-        if ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"'))) {
+        if (value.startsWith("'") && value.endsWith("'") || value.startsWith('"') && value.endsWith('"')) {
           value = value.slice(1, -1);
         }
         env[key] = value;
@@ -18608,7 +18643,8 @@ async function writeDotEnv(cfg) {
   const dotEnv = lines.join(`
 `) + `
 `;
-  await sshExec(cfg, `cat > ${cfg.deploy.path}/.env <<'ENV'\n${dotEnv}ENV`);
+  await sshExec(cfg, `cat > ${cfg.deploy.path}/.env <<'ENV'
+${dotEnv}ENV`);
   verbose("\u2713 .env file updated");
 }
 async function provision(cfg) {
@@ -18639,7 +18675,7 @@ async function installDepsAndRestart(cfg) {
   verbose(`Setting ownership to ${cfg.app.user}:${cfg.app.user}`);
   verbose("Installing dependencies if package.json exists...");
   verbose("Reloading systemd daemon...");
-  const cmd = `${sudo}chown -R ${cfg.app.user}:${cfg.app.user} '${cfg.deploy.path}' && cd '${cfg.deploy.path}' && if command -v bun >/dev/null 2>&1 && [ -f package.json ]; then bun install --production; fi && ${sudo}systemctl daemon-reload && ${restartCmd} && ${sudo}systemctl reload caddy || true && ${sudo}systemctl status ${cfg.service.name}.service | tail -n 40 | cat`;
+  const cmd = `${sudo}chown -R ${cfg.app.user}:${cfg.app.user} '${cfg.deploy.path}' && cd '${cfg.deploy.path}' && if [ -f package.json ]; then bash -lc 'cd ${cfg.deploy.path} && bun install --production'; fi && ${sudo}systemctl daemon-reload && ${restartCmd} && ${sudo}systemctl reload caddy || true && ${sudo}systemctl status ${cfg.service.name}.service | tail -n 40 | cat`;
   await sshExec(cfg, cmd);
   log("\u2705 Service started successfully");
 }
@@ -18813,5 +18849,5 @@ Install sshpass:`);
   process.exit(1);
 });
 
-//# debugId=7850F2804EC23F2C64756E2164756E21
+//# debugId=97EF94D58D7E26CB64756E2164756E21
 //# sourceMappingURL=cli.js.map
